@@ -4,7 +4,7 @@ A small Postgres/Supabase pattern, with SQL migrations and an integration test, 
 
 Español: patrón mínimo de Postgres/Supabase. Un job de `pg_cron` que marca llamadas no debe mantener candados de fila durante toda la ronda (escribe una sola vez al final, solo filas aún pendientes), y el webhook toma el candado con un `lock_timeout` corto; si está ocupado, encola el resultado en una tabla que otro cron reintenta cada minuto, con alerta si la cola crece. El esquema es ficticio.
 
-> **Status: `test/run.sh` passes (13 checks, real lock contention across concurrent `psql` sessions) on PostgreSQL 17.11, tested 2026-11-11.** `006_cron.sql` (the `pg_cron` schedule) needs the `pg_cron` extension and was not part of that run.
+> **Status (tested 2026-11-12, PostgreSQL 17.11 on macOS arm64, throwaway local server): `test/run.sh` passes, 13 of 13 checks, with real lock contention across concurrent `psql` sessions** (two runs in a row, same result). Covered: `001` to `005` and the lock/queue/retry/alert logic. Also checked: `006_cron.sql` runs cleanly without `pg_cron` and only prints a notice (jobs not scheduled). **Not tested:** the actual `pg_cron` scheduling (the extension was not available locally) and `sql/diagnostics.sql` query 1, which reads `cron.job_run_details`.
 
 ## Case study
 
@@ -51,7 +51,7 @@ createdb nolocks_test
 DATABASE_URL=postgresql:///nolocks_test ./test/run.sh
 ```
 
-It never touches `006_cron.sql`, so plain Postgres is enough. It truncates the demo tables, so use a scratch database. It checks, with several concurrent `psql` sessions:
+It never touches `006_cron.sql`, so plain Postgres is enough (no `pg_cron` needed). If you start a throwaway server with a Unix socket, keep the socket directory path short (macOS limits it to about 100 bytes), or connect over TCP. It truncates the demo tables, so use a scratch database. It checks, with several concurrent `psql` sessions:
 1. the bad dialer makes the naive webhook hit its statement timeout;
 2. the fixed dialer lets the webhook apply in under a second mid-round, and the end-of-round update does not overwrite what the webhook wrote;
 3. a busy row makes the webhook answer `queued` after the lock timeout, duplicates are not queued twice, and the retry job applies it once the row is free;
@@ -75,7 +75,7 @@ Open two SQL sessions on a scratch database with `001` to `005` applied and a fe
 - Fictional, minimal schema; no auth, no row-level security, no payload validation beyond casting.
 - The retry loop gives up on nothing by itself; it keeps retrying and alerts. Add a dead-letter policy if you need one.
 - `pg_cron` queues a run that would overlap the previous one; if you use another scheduler, keep the advisory lock.
-- Tested logic is limited to what `test/run.sh` covers, and as noted above it has not been run by the author yet.
+- Tested logic is limited to what `test/run.sh` covers (see the Status box). It has not been run against `pg_cron` or on Supabase.
 
 ## License
 
